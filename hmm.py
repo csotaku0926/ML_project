@@ -1,5 +1,6 @@
 import os
 import subprocess
+import numpy as np
 from tqdm import tqdm
 
 class HMM:
@@ -135,9 +136,9 @@ class HMM:
         Part 2-2:
         [ref](https://www.cis.upenn.edu/~cis2620/notes/Example-Viterbi-DNA.pdf)
 
-        The probability of the most probable path ending in state h with observation "A"
+        The probability of observation "A" was emitted by state H
         at ith position is (assuming the (i-1)th observation is "C", state 'k's are all other state) :
-        $p_h(A, i) = e_h(A) * max_k(p_k(C, i-1) * p_{kl})$
+        $p_h(A, i) = e_h(A) * max_k(p_k(C, i-1) * p_{kh})$
 
         to handle underflow caused by probability products, we use "log_2" function here
 
@@ -145,13 +146,52 @@ class HMM:
         input:
         - seq: input sequence, e.g. ["I", "love", "ML"]
         """
+        # init
         output = []
+        prev_state, pending_state = ["START"], []
+        # store log2 prob for previous state
         dp_probs = dict()
+        for h in self.emission_probs:
+            dp_probs[h] = 0
+        dp_probs["START"] = 0
 
-        for word in seq:
-            for h in self.emission_probs:
-                e_h_word = self._get_emission(h, word)
+        # dynamic program
+        # each word
+        for i in range(len(seq)):
+            # each state: regardless of transition, emission prob for each word given token is fixed
+            max_token = ''
+            max_token_value = -999
+            for h in self.emission_probs: 
+                e_h_word = self._get_emission(h, seq[i], fraction=True)
+                if (e_h_word <= 0.0):
+                    continue
+                
+                # "pending_state" will be "prev_state" in next round
+                pending_state.append(h)
+                # decide max_k(p_k(C, i-1) * p_{kh}), k \in "prev_state"
+                max_value = -999
+                for k in prev_state:
+                    trans = self._get_transition(k, h, fraction=True)
+                    if (trans <= 0.0):
+                        continue
 
+                    log_prob = dp_probs[k] + np.log2(trans)
+                    max_value = max(max_value, log_prob)
+                
+                dp_probs[h] = np.log2(e_h_word) + max_value
+                print(h, ':', dp_probs[h])
+                
+                # decide most probable token for this word
+                if (dp_probs[h] > max_token_value):
+                    max_token = h
+                    max_token_value = dp_probs[h]
+            
+            # update prev_state
+            prev_state = pending_state
+            pending_state = []
+            output.append(max_token)
+
+        return output
     
     def predict(self, test_data:list):
         """
@@ -176,7 +216,7 @@ class HMM:
                 token = token[:-1]
                 f.write(token + ' ' + self._argmax(token) + '\n')
         
-def get_data(dir:str):
+def get_data(dir:str, use_viterbi=False):
     """
     given a file path, return lines read from it
     """
@@ -187,6 +227,10 @@ def get_data(dir:str):
     data = []
     with open(dir, "r") as f:
         data = f.readlines()
+
+    # pre-processing for viterbi
+    if (use_viterbi):
+        data = [d[:-1] for d in data]
     return data
     
 """
@@ -202,13 +246,15 @@ if __name__ == '__main__':
     train_data = get_data(f"{train_dir}/train")
 
     hmm = HMM(outdir=outdir, outfile=outfile)
-    # hmm.calc_emission(train_data)
-    hmm.calc_transition(train_data[:28])
-    print(hmm.transition_probs)
-    print(hmm._get_transition("O", "STOP"))
+    hmm.calc_emission(train_data)
+    hmm.calc_transition(train_data)
+
 
     # validation
-    # dev_data = get_data(f"{train_dir}/dev.in")
+    dev_data = get_data(f"{train_dir}/dev.in", use_viterbi=True)
+    print(dev_data[:45])
+    output = hmm.Viterbi(dev_data[:45])
+    print(output)
     # hmm.predict(dev_data)
     # # run eval/eval.py with subprocess
     # eval_out = subprocess.check_output(["python", 
